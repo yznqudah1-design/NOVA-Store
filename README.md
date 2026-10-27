@@ -77,4 +77,4 @@ npx wrangler pages deploy dist --project-name nova-store
 
 React 19 · Vite 7 · Tailwind 4 · Framer Motion · HashRouter (جاهز لأي استضافة ثابتة) · صورة النجوم مضمّنة base64 داخل HTML
 
-
+nova
