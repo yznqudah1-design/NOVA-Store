@@ -1,14 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft, Minus, Plus, ShoppingCart, TicketPercent, Trash2 } from "lucide-react";
 import { jod } from "../lib/data";
 import { useShop } from "../lib/store";
+import { AvailabilityBadge } from "../components/ProductBadges";
 
 export default function CartPage() {
-  const { cart, products, setQty, removeFromCart, codes, notify } = useShop();
+  const { api, cart, products, setQty, removeFromCart, notify, storeNameOf, cities, settings } = useShop();
   const [codeInput, setCodeInput] = useState("");
-  const [applied, setApplied] = useState<string | null>(null);
+  const [applied, setApplied] = useState<{ code: string; percent: number } | null>(null);
+  const [serverDiscount, setServerDiscount] = useState(0);
 
   const lines = cart
     .map((l) => ({ ...l, product: products.find((p) => p.id === l.id)! }))
@@ -16,16 +18,37 @@ export default function CartPage() {
 
   const subtotal = useMemo(() => lines.reduce((s, l) => s + l.product.price * l.qty, 0), [lines]);
 
-  const appliedCode = codes.find((c) => c.code === applied && c.active);
-  const discount = appliedCode ? (subtotal * appliedCode.percent) / 100 : 0;
+  /* الخصم يحسبه الخادم (قد يُقيَّد على بعض المنتجات لحماية الحد الأدنى للسعر) */
+  const cartKey = JSON.stringify(cart);
+  useEffect(() => {
+    if (!api || !applied || cart.length === 0 || cities.length === 0) {
+      setServerDiscount(0);
+      return;
+    }
+    let alive = true;
+    api
+      .quote(cart, applied.code, cities[0].name, false)
+      .then((q) => alive && setServerDiscount(q.discount))
+      .catch(() => alive && setServerDiscount(0));
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, applied, cartKey, cities]);
+  const discount = applied ? serverDiscount : 0;
 
-  const applyCode = () => {
-    const c = codes.find((x) => x.code.toLowerCase() === codeInput.trim().toLowerCase());
-    if (!c) return notify("كود غير موجود");
-    if (!c.active) return notify("هذا الكود غير فعّال حاليًا");
-    setApplied(c.code);
-    notify(`تم تطبيق خصم ${c.percent}%`);
+  const applyCode = async () => {
+    if (!api || !codeInput.trim()) return;
+    try {
+      const percent = await api.checkCode(codeInput);
+      if (percent === null) return notify("الكود غير موجود أو غير فعّال");
+      setApplied({ code: codeInput.trim().toUpperCase(), percent });
+      notify(`تم تطبيق خصم ${percent}%`);
+    } catch {
+      notify("تعذّر التحقق من الكود — حاول مجددًا");
+    }
   };
+  const appliedCode = applied;
 
   if (lines.length === 0) {
     return (
@@ -71,9 +94,10 @@ export default function CartPage() {
                 <img src={l.product.img} alt={l.product.name} className="h-full w-full object-cover" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="text-[10px] font-semibold text-white/40">{l.product.seller}</span>
+                <span className="text-[10px] font-semibold text-white/40">{storeNameOf(l.product)}</span>
                 <h3 className="truncate font-cairo text-sm font-bold sm:text-base">{l.product.name}</h3>
                 <span className="mt-1 block font-nova text-lg font-semibold text-nova-dust">{jod(l.product.price)}</span>
+                <span className="mt-1 block"><AvailabilityBadge p={l.product} compact /></span>
               </div>
               <div className="flex flex-col items-end gap-3">
                 <div className="flex items-center rounded-full border border-white/12">
@@ -150,14 +174,14 @@ export default function CartPage() {
 
             <Link
               to="/checkout"
-              state={{ code: applied }}
+              state={{ code: applied?.code ?? null }}
               className="btn-star mt-6 h-13 w-full py-3.5"
             >
               إتمام الطلب
               <ArrowLeft className="size-4" />
             </Link>
             <p className="mt-3 text-center text-[11px] text-white/40">
-              توصيل مجاني للطلبات فوق {jod(50)} ولطلاب الجامعات الأردنية
+              توصيل مجاني للطلبات فوق {jod(settings.freeDeliveryThreshold)} ولطلاب الجامعات الأردنية
             </p>
           </motion.div>
         </div>

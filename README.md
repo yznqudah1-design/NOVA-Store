@@ -1,80 +1,50 @@
 # NOVA STORE — بريقٌ لا يخبو
 
-أول منصة تسوق أردنية متعددة البائعين: متجر كامل بإدارة المنتجات، بوابة بائعين، دفع كليك `Nova962`، تقارير أكواد شهرية بتوقيت عمّان، وعدّاد إطلاق حقيقي.
+منصة تسوق أردنية متعددة الأقسام: كل قسم متجر فرعي باسم Nova (Nova للعطور، Nova للإلكترونيات…)، دفع كليك `Nova962` أو عند الاستلام، وتقارير أكواد شهرية بتوقيت عمّان.
+
+البيانات كلها في **Supabase**. الحماية على الخادم (سياسات RLS + دوال SQL)، وليست في JavaScript:
+
+- الزائر يقرأ فقط: الأقسام، المنتجات المعروضة، المحافظات، الإعدادات العامة.
+- **سعر المورد والموردون** في جداول لا يقرؤها إلا المدير (`product_costs`، `suppliers`).
+- الطلب يُنشأ فقط عبر `place_order()` التي تحسب الأسعار والخصم والتوصيل على الخادم.
+- لا يمكن حفظ سعر بيع أقل من سعر المورد × 1.10، وأكواد الخصم تُقيَّد تلقائيًا عند هذا الحد.
+- المدير = مستخدم Supabase Auth مسجّل في جدول `admins`.
 
 ## التشغيل محليًا
 
 ```bash
 npm install
-npm run dev      # تطوير
-npm run build    # بناء الإنتاج → dist/index.html (ملف واحد يحوي كل شيء)
+npm run dev      # بدون متغيرات Supabase يعمل ببيانات تجريبية في الذاكرة (دخول الإدارة: أي بريد + كلمة المرور dev)
+npm run build    # بناء الإنتاج → dist/index.html
 ```
 
-## حسابات تجريبية
+## إعداد Supabase (مرة واحدة)
 
-| الدور | البيانات |
-|---|---|
-| الإدارة | `admin@nova.jo` / `NOVA2026` |
-| بائع (عطور ألفا) | `alpha` / `alpha123` |
+1. [supabase.com](https://supabase.com) ← **New project** (المنطقة المقترحة: `Frankfurt / eu-central-1`).
+2. **SQL Editor ← New query**: الصق [`supabase/schema.sql`](supabase/schema.sql) ثم **Run**، ثم [`supabase/seed.sql`](supabase/seed.sql) ثم **Run**.
+3. **Authentication ← Users ← Add user**: أنشئ حساب المدير ببريد وكلمة مرور قوية.
+4. في SQL Editor شغّل (ببريدك):
+   ```sql
+   insert into admins (user_id) select id from auth.users where email = 'YOUR-ADMIN-EMAIL';
+   ```
+5. **Authentication ← Sign In / Providers**: أوقف **Allow new users to sign up** (لا حاجة لتسجيل عام).
+6. **Settings ← API**: انسخ `Project URL` و `anon public` key.
 
----
+## النشر على Cloudflare Pages
 
-## 1️⃣ رفع المشروع إلى GitHub
-
-```bash
-git init
-git add .
-git commit -m "NOVA STORE — الإطلاق الأول"
-git branch -M main
-git remote add origin https://github.com/<اسم-المستخدم>/nova-store.git
-git push -u origin main
-```
-
-> أنشئ مستودعًا جديدًا من github.com/new باسم `nova-store` (لا تُنشئ README لأنه موجود هنا).
-
-## 2️⃣ النشر على Cloudflare Pages
-
-### الطريقة الأسهل (ربط GitHub — تحديث تلقائي مع كل push)
-
-1. من لوحة Cloudflare: **Workers & Pages ← Create ← Pages ← Connect to Git**
-2. اختر مستودع `nova-store`
-3. الإعدادات:
-   - **Framework preset:** `Vite`
-   - **Build command:** `npm run build`
-   - **Build output directory:** `dist`
-4. **Save and Deploy** — تحصل على رابط `nova-store.pages.dev` خلال دقيقة.
-5. دومين مخصص: **Custom domains ← Set up a domain** (إن كان الدومين على Cloudflare يُربط تلقائيًا).
-
-> ملاحظة: الموقع يستخدم HashRouter فلا يحتاج أي قواعد redirects، وملف `_headers` جاهز للتحديث الفوري.
-
-### طريقة الرفع المباشر (بدون GitHub)
-
-```bash
-npm run build
-npx wrangler pages deploy dist --project-name nova-store
-```
-
-## 3️⃣ ربط Supabase (قاعدة البيانات)
-
-الموقع حاليًا يعمل كاملًا على localStorage. للانتقال لقاعدة بيانات حقيقية مشتركة:
-
-1. من [supabase.com](https://supabase.com): **New project** — الاسم `nova-store`، والمنطقة الأقرب (يفضّل `Frankfurt / eu-central-1`).
-2. من **SQL Editor ← New query**: الصق كامل محتوى [`supabase/schema.sql`](supabase/schema.sql) ثم **Run** — ينشئ الجداول + فهارس + تقرير الأكواد الشهري بتوقيت عمّان.
-3. من **Settings ← API**: انسخ `Project URL` و `anon public` key.
-4. في **Cloudflare Pages ← Settings ← Environment variables** (لـ Production و Preview):
+1. **Settings ← Environment variables** (لـ Production و Preview):
    - `VITE_SUPABASE_URL` = رابط المشروع
-   - `VITE_SUPABASE_ANON_KEY` = المفتاح العام
-5. **Retry deployment** — وسيتحوّل العميل الجاهز في `src/lib/supabase.ts` للعمل تلقائيًا، ثم استبدل دوال `src/lib/store.tsx` تدريجيًا باستدعاءات Supabase.
+   - `VITE_SUPABASE_ANON_KEY` = المفتاح العام (anon)
+2. **Build command:** `npm run build` — **Output:** `dist`.
 
-## متغيرات البيئة
+> مفتاح `anon` عام بطبيعته ومسموح أن يظهر في المتصفح. **لا تضع أبدًا** مفتاح `service_role` في الواجهة أو في متغير يبدأ بـ `VITE_`.
+> بدون المتغيرين تعرض نسخة الإنتاج صفحة «المتجر قيد الإعداد» مع رابط واتساب.
 
-| المتغير | الوصف |
-|---|---|
-| `VITE_SUPABASE_URL` | رابط مشروع Supabase |
-| `VITE_SUPABASE_ANON_KEY` | المفتاح العام |
+## التسعير
+
+`سعر البيع = ceil(round(سعر المورد × 1.20 × 100) / 50) / 2` — أي ×1.20 مقرّبًا للأعلى لأقرب 0.5 د.أ.
+أمثلة: 10 → 12، 25 → 30، 37 → 44.5، 74 → 89. المعادلة نفسها في `src/lib/pricing.ts` و `nova_price()` في SQL.
 
 ## التقنيات
 
-React 19 · Vite 7 · Tailwind 4 · Framer Motion · HashRouter (جاهز لأي استضافة ثابتة) · صورة النجوم مضمّنة base64 داخل HTML
-
-nova
+React 19 · Vite 7 · Tailwind 4 · Framer Motion · Supabase · HashRouter

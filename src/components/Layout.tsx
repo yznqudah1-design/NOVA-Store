@@ -67,8 +67,44 @@ function Toasts() {
   );
 }
 
+function StatusScreen() {
+  const { status, loadError, reloadCatalog } = useShop();
+  if (status === "ready") return null;
+  return (
+    <div className="mx-auto flex max-w-md flex-col items-center px-4 py-28 text-center">
+      <div className="card-nova flex w-full flex-col items-center px-8 py-14">
+        {status === "loading" ? (
+          <>
+            <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-nova-dust" />
+            <p className="mt-5 text-sm text-white/55">جارِ تحميل المتجر…</p>
+          </>
+        ) : (
+          <>
+            <h1 className="font-cairo text-xl font-extrabold">
+              {status === "unconfigured" ? "المتجر قيد الإعداد" : "تعذّر الاتصال بالمتجر"}
+            </h1>
+            <p className="mt-2 text-sm leading-7 text-white/55">
+              {status === "unconfigured"
+                ? "نعمل على تجهيز المتجر. للطلب الآن راسلنا على واتساب."
+                : `حدث خطأ أثناء التحميل${loadError ? ` (${loadError})` : ""}. حاول مجددًا أو راسلنا على واتساب.`}
+            </p>
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              {status === "error" && (
+                <button onClick={reloadCatalog} className="btn-ghost h-11 px-6 text-sm">إعادة المحاولة</button>
+              )}
+              <a href={`https://wa.me/${WHATSAPP_INTL}`} target="_blank" rel="noreferrer" className="btn-star h-11 px-6 text-sm">
+                واتساب {WHATSAPP}
+              </a>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Layout() {
-  const { cartCount, wishlist } = useShop();
+  const { cartCount, wishlist, isAdmin, status, categories } = useShop();
   const [q, setQ] = useState("");
   const navigate = useNavigate();
 
@@ -156,15 +192,21 @@ export default function Layout() {
                 </span>
               )}
             </Link>
-            <Link to="/seller" aria-label="بوابة البائعين" className="hidden h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-nova-deep/70 transition hover:border-nova-dust/60 hover:text-nova-dust sm:flex">
+            <Link to="/seller" aria-label="كن مورداً لـ Nova" title="كن مورداً لـ Nova" className="hidden h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-nova-deep/70 transition hover:border-nova-dust/60 hover:text-nova-dust sm:flex">
               <Store className="size-5" />
             </Link>
             <Link to="/login" className="btn-star hidden h-11 px-5 text-sm sm:inline-flex">
               <User className="size-4" />
               دخول
             </Link>
-            <Link to="/admin" aria-label="لوحة الإدارة" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-nova-deep/70 transition hover:border-nova-dust/60 hover:text-nova-dust">
-              <Lock className="size-4" />
+            {/* يظهر للمدير المسجّل فقط — الحماية الفعلية على الخادم (RLS) */}
+            {isAdmin && (
+              <Link to="/admin" aria-label="لوحة الإدارة" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-nova-deep/70 transition hover:border-nova-dust/60 hover:text-nova-dust">
+                <Lock className="size-4" />
+              </Link>
+            )}
+            <Link to="/login" aria-label="دخول" className="flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-nova-deep/70 transition hover:border-white/40 sm:hidden">
+              <User className="size-4" />
             </Link>
           </div>
         </div>
@@ -183,7 +225,7 @@ export default function Layout() {
 
       {/* المحتوى */}
       <main className="relative z-10 flex-1">
-        <Outlet />
+        {status === "ready" ? <Outlet /> : <StatusScreen />}
       </main>
 
       {/* الفوتر */}
@@ -195,7 +237,7 @@ export default function Layout() {
               NOVA — A Shine That Never Fades<span className="text-nova-dust">.</span>
             </p>
             <p className="mt-3 max-w-xs text-sm leading-7 text-white/55">
-              أول منصة تسوق أردنية متعددة البائعين: أفضل المتاجر المحلية، أسعار بالدينار الأردني، وتوصيل لكل المحافظات.
+              منصة تسوق أردنية متعددة الأقسام: أقسام Nova المتخصصة، أسعار بالدينار الأردني، وتوصيل لكل المحافظات.
             </p>
           </div>
 
@@ -203,10 +245,13 @@ export default function Layout() {
             <h4 className="font-nova text-sm font-semibold tracking-wider text-nova-dust">تسوّق</h4>
             <ul className="mt-4 space-y-2.5 text-sm text-white/60">
               <li><Link to="/products" className="transition hover:text-white">كل المنتجات</Link></li>
-              <li><Link to="/products?cat=perfumes" className="transition hover:text-white">عطور رجالي</Link></li>
-              <li><Link to="/products?cat=electronics" className="transition hover:text-white">إلكترونيات</Link></li>
+              {categories.map((c) => (
+                <li key={c.id}>
+                  <Link to={`/products?cat=${c.id}`} className="transition hover:text-white">{c.storeName}</Link>
+                </li>
+              ))}
               <li><Link to="/cart" className="transition hover:text-white">سلة التسوق</Link></li>
-              <li><Link to="/seller" className="transition hover:text-nova-dust">بوابة البائعين</Link></li>
+              <li><Link to="/seller" className="transition hover:text-nova-dust">بوابة الموردين</Link></li>
             </ul>
           </div>
 
