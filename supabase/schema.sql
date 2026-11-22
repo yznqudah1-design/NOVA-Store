@@ -524,6 +524,18 @@ end $$;
 revoke all on function admin_save_product(jsonb, jsonb) from public, anon;
 grant execute on function admin_save_product(jsonb, jsonb) to authenticated;
 
+/* =========================== تقوية الأمان =========================== */
+
+/* search_path ثابت، ودوال الـ trigger لا تُستدعى مباشرة من الـ API */
+alter function nova_price(numeric) set search_path = public;
+alter function nova_floor(numeric) set search_path = public;
+alter function set_order_month_key() set search_path = public;
+revoke execute on function enforce_price_floor() from public, anon, authenticated;
+revoke execute on function on_payment_approved() from public, anon, authenticated;
+revoke execute on function check_review_order() from public, anon, authenticated;
+revoke execute on function refresh_product_rating() from public, anon, authenticated;
+revoke execute on function set_order_month_key() from public, anon, authenticated;
+
 /* =========================== التقارير =========================== */
 
 /* تقرير استخدام الأكواد الشهري — security_invoker حتى يخضع لـ RLS (للمدير فقط) */
