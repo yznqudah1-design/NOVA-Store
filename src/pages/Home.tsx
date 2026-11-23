@@ -2,7 +2,6 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
-  BadgeCheck,
   ChevronLeft,
   GraduationCap,
   MessageCircle,
@@ -13,22 +12,22 @@ import {
   Wallet,
 } from "lucide-react";
 import NovaLogo from "../components/NovaLogo";
-import Countdown from "../components/Countdown";
 import ProductCard from "../components/ProductCard";
+import StoreMark from "../components/StoreMark";
 import { JUSTLogo, YULogo } from "../components/UniLogos";
-import { CATEGORIES, WHATSAPP, WHATSAPP_INTL } from "../lib/data";
+import { SUPPLIER_WA_TEXT, WHATSAPP, WHATSAPP_INTL } from "../lib/data";
 import { useShop } from "../lib/store";
 
 const FEATURES = [
   {
     icon: Truck,
-    title: "توصيل صاروخي",
-    desc: "فريق NOVA الداخلي يوصّل لكل محافظات الأردن، وعمّان خلال ٢٤–٤٨ ساعة.",
+    title: "توصيل لكل المحافظات",
+    desc: "المتوفر فورًا يصلك خلال 1-2 يوم، ومنتجات «عند الطلب» تُجهّز خلال 2-4 أيام.",
   },
   {
     icon: ShieldCheck,
     title: "ضمان النجم",
-    desc: "منتجات أصلية 100% وإرجاع مجاني خلال ١٤ يومًا بدون أسئلة.",
+    desc: "منتجات مختارة من موردين موثوقين، وإرجاع خلال 14 يوماً حسب سياسة كل قسم.",
   },
   {
     icon: Wallet,
@@ -49,10 +48,34 @@ const fadeUp = {
   transition: { duration: 0.8, ease: [0.22, 1, 0.36, 1] as const },
 };
 
+function SeasonalBanner() {
+  const { settings } = useShop();
+  const b = settings.seasonalBanner;
+  if (!b || !b.enabled || !b.title) return null;
+  return (
+    <section className="mx-auto max-w-4xl px-4 lg:px-6">
+      <motion.div {...fadeUp}>
+        <div className="card-nova relative overflow-hidden p-8 text-center sm:p-10">
+          <div className="pointer-events-none absolute -top-24 start-1/2 h-56 w-[30rem] max-w-full -translate-x-1/2 rounded-full bg-sky-400/15 blur-[90px]" />
+          <div className="relative">
+            <h2 className="font-cairo text-2xl font-extrabold leading-snug sm:text-3xl">{b.title}</h2>
+            {b.subtitle && <p className="mx-auto mt-3 max-w-lg text-sm leading-7 text-white/60">{b.subtitle}</p>}
+            <Link to={b.ctaHref} className="btn-star mt-6 h-11 text-sm">
+              {b.ctaLabel}
+              <ArrowLeft className="size-4" />
+            </Link>
+          </div>
+        </div>
+      </motion.div>
+    </section>
+  );
+}
+
 export default function Home() {
-  const { products } = useShop();
+  const { products, categories, categoryOf } = useShop();
   const perfumes = products.filter((p) => p.category === "perfumes");
   const featured = products.filter((p) => p.category !== "perfumes").slice(0, 8);
+  const perfumeCat = categoryOf("perfumes");
 
   return (
     <div>
@@ -93,8 +116,8 @@ export default function Home() {
             transition={{ delay: 0.6, duration: 0.9 }}
             className="mx-auto mt-5 max-w-xl text-base leading-8 text-white/65 sm:text-lg"
           >
-            بريقٌ لا يخبو — أول منصة تسوق أردنية متعددة البائعين تجمع لك أفضل المتاجر
-            المحلية والمنتجات البريميوم في مكانٍ واحد، بأسعار الدينار وتوصيل لكل المحافظات.
+            بريقٌ لا يخبو — منصة تسوق أردنية متعددة الأقسام. كل ما تحتاجه في مكان واحد:
+            أقسام Nova المتخصصة، بأسعار الدينار وتوصيل لكل المحافظات.
           </motion.p>
 
           <motion.div
@@ -107,20 +130,16 @@ export default function Home() {
               <Sparkles className="size-5" />
               تسوّق الآن
             </Link>
-            <a href={`https://wa.me/${WHATSAPP_INTL}`} target="_blank" rel="noreferrer" className="btn-ghost">
+            <Link to="/seller" className="btn-ghost">
               <Store className="size-5" />
-              انضم كبائع
-            </a>
+              كن مورداً لـ Nova
+            </Link>
           </motion.div>
         </div>
       </section>
 
-      {/* ---------------- العدّاد ---------------- */}
-      <section className="mx-auto max-w-4xl px-4 lg:px-6">
-        <motion.div {...fadeUp}>
-          <Countdown />
-        </motion.div>
-      </section>
+      {/* ---------------- البانر الموسمي (يُعدّل من الإدارة) ---------------- */}
+      <SeasonalBanner />
 
       {/* ---------------- الميزات ---------------- */}
       <section className="mx-auto mt-16 max-w-7xl px-4 lg:px-6">
@@ -187,12 +206,12 @@ export default function Home() {
         </motion.div>
       </section>
 
-      {/* ---------------- التصنيفات ---------------- */}
+      {/* ---------------- الأقسام ---------------- */}
       <section className="mx-auto mt-20 max-w-7xl px-4 lg:px-6">
         <motion.div {...fadeUp} className="flex items-end justify-between">
           <div>
             <span className="font-nova text-xs font-semibold tracking-[0.3em] text-nova-dust">تصفّح المجرة</span>
-            <h2 className="mt-2 font-cairo text-3xl font-extrabold sm:text-4xl">التصنيفات</h2>
+            <h2 className="mt-2 font-cairo text-3xl font-extrabold sm:text-4xl">أقسام Nova</h2>
           </div>
           <Link to="/products" className="hidden items-center gap-1.5 text-sm font-semibold text-white/60 transition hover:text-white sm:flex">
             كل المنتجات
@@ -201,21 +220,20 @@ export default function Home() {
         </motion.div>
 
         <div className="mt-7 grid grid-cols-2 gap-4 lg:grid-cols-4">
-          {CATEGORIES.map((c, i) => {
+          {categories.map((c, i) => {
             const count = products.filter((p) => p.category === c.id).length;
             return (
-              <motion.div key={c.id} {...fadeUp} transition={{ ...fadeUp.transition, delay: i * 0.08 }}>
+              <motion.div key={c.id} {...fadeUp} transition={{ ...fadeUp.transition, delay: (i % 4) * 0.08 }}>
                 <Link
                   to={`/products?cat=${c.id}`}
-                  className="card-nova group flex h-full flex-col p-6 transition-all duration-300 hover:-translate-y-1.5 hover:border-nova-dust/50"
+                  className="card-nova group flex h-full flex-col p-5 transition-all duration-300 hover:-translate-y-1.5 sm:p-6"
+                  style={{ borderColor: `${c.color}33` }}
                 >
-                  <span className="font-nova text-4xl font-semibold text-white/10 transition-colors group-hover:text-nova-dust/30" dir="ltr">
-                    0{i + 1}
-                  </span>
-                  <h3 className="mt-4 font-cairo text-lg font-extrabold">{c.name}</h3>
-                  <p className="mt-1 text-xs text-white/45">{c.hint}</p>
-                  <span className="mt-4 flex items-center gap-1 text-[11px] font-bold text-nova-dust">
-                    {count} منتجات
+                  <StoreMark category={c} size="xs" />
+                  <h3 className="mt-4 font-cairo text-base font-extrabold sm:text-lg">{c.storeName}</h3>
+                  <p className="mt-1 text-xs leading-5 text-white/45">{c.hint}</p>
+                  <span className="mt-auto flex items-center gap-1 pt-4 text-[11px] font-bold" style={{ color: c.color }}>
+                    {count > 0 ? `${count} ${count <= 10 && count >= 3 ? "منتجات" : "منتج"}` : "قريباً في Nova"}
                     <ChevronLeft className="size-3.5 transition-transform group-hover:-translate-x-1" />
                   </span>
                 </Link>
@@ -225,54 +243,55 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ---------------- ركن عطور ألفا ---------------- */}
-      <section className="mx-auto mt-20 max-w-7xl px-4 lg:px-6">
-        <motion.div {...fadeUp} className="flex items-end justify-between">
-          <div>
-            <span className="flex items-center gap-2 font-nova text-xs font-semibold tracking-[0.3em] text-nova-dust">
-              <BadgeCheck className="size-4" />
-              بائع موثّق
-            </span>
-            <h2 className="mt-2 font-cairo text-3xl font-extrabold sm:text-4xl">
-              ركن عطور ألفا <span className="text-nova-dust">— رجالي</span>
-            </h2>
-          </div>
-          <Link to="/products?cat=perfumes" className="flex items-center gap-1.5 text-sm font-semibold text-white/60 transition hover:text-white">
-            كل العطور
-            <ChevronLeft className="size-4" />
-          </Link>
-        </motion.div>
-
-        <div className="hide-scrollbar -mx-4 mt-7 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 lg:mx-0 lg:px-0">
-          {perfumes.map((p, i) => (
-            <div key={p.id} className="w-64 shrink-0 snap-start sm:w-72">
-              <ProductCard p={p} index={i} />
+      {/* ---------------- Nova للعطور ---------------- */}
+      {perfumes.length > 0 && (
+        <section className="mx-auto mt-20 max-w-7xl px-4 lg:px-6">
+          <motion.div {...fadeUp} className="flex items-end justify-between gap-4">
+            <div>
+              <StoreMark category={perfumeCat} />
+              <h2 className="mt-3 font-cairo text-3xl font-extrabold sm:text-4xl">
+                {perfumeCat?.storeName ?? "Nova للعطور"} <span className="text-nova-dust">— رجالي</span>
+              </h2>
             </div>
-          ))}
-        </div>
-      </section>
+            <Link to="/products?cat=perfumes" className="flex shrink-0 items-center gap-1.5 text-sm font-semibold text-white/60 transition hover:text-white">
+              كل العطور
+              <ChevronLeft className="size-4" />
+            </Link>
+          </motion.div>
+
+          <div className="hide-scrollbar -mx-4 mt-7 flex snap-x snap-mandatory gap-4 overflow-x-auto px-4 pb-2 lg:mx-0 lg:px-0">
+            {perfumes.map((p, i) => (
+              <div key={p.id} className="w-64 shrink-0 snap-start sm:w-72">
+                <ProductCard p={p} index={i} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ---------------- منتجات مختارة ---------------- */}
-      <section className="mx-auto mt-20 max-w-7xl px-4 lg:px-6">
-        <motion.div {...fadeUp} className="flex items-end justify-between">
-          <div>
-            <span className="font-nova text-xs font-semibold tracking-[0.3em] text-nova-dust">مختارات الفريق</span>
-            <h2 className="mt-2 font-cairo text-3xl font-extrabold sm:text-4xl">يتصاعد الآن</h2>
+      {featured.length > 0 && (
+        <section className="mx-auto mt-20 max-w-7xl px-4 lg:px-6">
+          <motion.div {...fadeUp} className="flex items-end justify-between">
+            <div>
+              <span className="font-nova text-xs font-semibold tracking-[0.3em] text-nova-dust">مختارات الفريق</span>
+              <h2 className="mt-2 font-cairo text-3xl font-extrabold sm:text-4xl">يتصاعد الآن</h2>
+            </div>
+            <Link to="/products" className="flex items-center gap-1.5 text-sm font-semibold text-white/60 transition hover:text-white">
+              عرض الكل
+              <ChevronLeft className="size-4" />
+            </Link>
+          </motion.div>
+
+          <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {featured.map((p, i) => (
+              <ProductCard key={p.id} p={p} index={i} />
+            ))}
           </div>
-          <Link to="/products" className="flex items-center gap-1.5 text-sm font-semibold text-white/60 transition hover:text-white">
-            عرض الكل
-            <ChevronLeft className="size-4" />
-          </Link>
-        </motion.div>
+        </section>
+      )}
 
-        <div className="mt-7 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {featured.map((p, i) => (
-            <ProductCard key={p.id} p={p} index={i} />
-          ))}
-        </div>
-      </section>
-
-      {/* ---------------- بانر البائعين ---------------- */}
+      {/* ---------------- بانر الموردين ---------------- */}
       <section className="mx-auto mt-24 max-w-7xl px-4 lg:px-6">
         <motion.div {...fadeUp}>
           <div className="card-nova relative overflow-hidden p-10 text-center sm:p-16">
@@ -283,24 +302,23 @@ export default function Home() {
               <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white text-black">
                 <Store className="size-6" />
               </span>
-              <h2 className="mt-5 font-cairo text-3xl font-extrabold sm:text-4xl">عندك متجر؟ خلّيه يلمع مع NOVA</h2>
+              <h2 className="mt-5 font-cairo text-3xl font-extrabold sm:text-4xl">كن مورداً لـ Nova</h2>
               <p className="mx-auto mt-3 max-w-lg text-sm leading-8 text-white/60">
-                انضم لمنصة البائعين: نوصّل عنك، نسوّق لك، وأرباحك تصلك أسبوعيًا.
-                التسجيل مجاني حتى الإطلاق الرسمي.
+                عندك بضاعة؟ نعرضها ونبيعها ونوصّلها باسم Nova، وتستلم حقك أسبوعياً.
               </p>
               <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
                 <a
-                  href={`https://wa.me/${WHATSAPP_INTL}?text=${encodeURIComponent("أرغب بالانضمام كبائع في NOVA STORE")}`}
+                  href={`https://wa.me/${WHATSAPP_INTL}?text=${encodeURIComponent(SUPPLIER_WA_TEXT)}`}
                   target="_blank"
                   rel="noreferrer"
                   className="btn-star"
                 >
                   <MessageCircle className="size-5" />
-                  سجّل متجرك عبر واتساب
+                  تواصل معنا عبر واتساب
                 </a>
                 <Link to="/seller" className="btn-ghost">
                   <Store className="size-5" />
-                  بوابة البائعين الحاليين
+                  بوابة الموردين
                 </Link>
               </div>
             </div>

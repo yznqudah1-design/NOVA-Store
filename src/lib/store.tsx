@@ -1,22 +1,11 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import {
-  CODES_SEED,
-  ORDERS_SEED,
-  PAYMENTS_SEED,
-  PRODUCTS,
-  SELLERS_SEED,
-} from "./data";
-import type {
-  DiscountCode,
-  Order,
-  Payment,
-  PaymentStatus,
-  Product,
-  Seller,
-} from "./data";
+import type { Category, City, Product, SiteSettings } from "./data";
+import { cleanError } from "./data";
+import type { Api } from "./api";
+import { loadApi } from "./supabase";
 
-/* ---------------- حالة دائمة في localStorage ---------------- */
+/* ------- حالة المتصفح فقط (سلة، مفضلة، بيانات الزبون) — ليست بيانات حساسة ------- */
 
 function usePersistent<T>(key: string, initial: T) {
   const [value, setValue] = useState<T>(() => {
@@ -37,18 +26,25 @@ function usePersistent<T>(key: string, initial: T) {
   return [value, setValue] as const;
 }
 
-/* ------------------------- الأنواع ------------------------- */
-
 export interface CartLine {
   id: string;
   qty: number;
 }
 
+type Status = "loading" | "ready" | "error" | "unconfigured";
+
 interface ShopCtx {
+  api: Api | null;
+  status: Status;
+  loadError: string;
+  reloadCatalog: () => Promise<void>;
+
+  categories: Category[];
   products: Product[];
-  addProduct: (p: Product) => void;
-  updateProduct: (id: string, patch: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
+  cities: City[];
+  settings: SiteSettings;
+  categoryOf: (id: string) => Category | undefined;
+  storeNameOf: (p: Product) => string;
 
   cart: CartLine[];
   addToCart: (id: string, qty?: number) => void;
@@ -60,31 +56,10 @@ interface ShopCtx {
   wishlist: string[];
   toggleWish: (id: string) => void;
 
-  codes: DiscountCode[];
-  addCode: (c: DiscountCode) => void;
-  removeCode: (code: string) => void;
-  toggleCode: (code: string) => void;
-
-  orders: Order[];
-  placeOrder: (o: Order) => void;
-  setOrderStatus: (id: string, s: Order["status"]) => void;
-
-  payments: Payment[];
-  addPayment: (p: Payment) => void;
-  setPaymentStatus: (id: string, s: PaymentStatus) => void;
-
-  sellers: Seller[];
-  toggleSeller: (id: string) => void;
-  addSeller: (s: Seller) => string | null;
-  removeSeller: (id: string) => void;
-
-  sellerId: string | null;
-  currentSeller: Seller | null;
-  sellerLogin: (username: string, password: string) => { ok: boolean; msg: string };
-  sellerLogout: () => void;
-
-  adminAuthed: boolean;
-  adminLogin: (ok: boolean) => void;
+  isAdmin: boolean;
+  adminEmail: string | null;
+  signIn: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
 
   customer: { name: string; phone: string } | null;
   setCustomer: (c: { name: string; phone: string } | null) => void;
@@ -95,147 +70,142 @@ interface ShopCtx {
 
 const Ctx = createContext<ShopCtx | null>(null);
 
+const DEFAULT_SETTINGS: SiteSettings = { freeDeliveryThreshold: 50, seasonalBanner: null };
+
 export function ShopProvider({ children }: { children: ReactNode }) {
-  const [products, setProducts] = usePersistent<Product[]>("nova_products", PRODUCTS);
-  const [sellerId, setSellerId] = usePersistent<string | null>("nova_seller", null);
+  const [api, setApi] = useState<Api | null>(null);
+  const [status, setStatus] = useState<Status>("loading");
+  const [loadError, setLoadError] = useState("");
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [cities, setCities] = useState<City[]>([]);
+  const [settings, setSettings] = useState<SiteSettings>(DEFAULT_SETTINGS);
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [adminEmail, setAdminEmail] = useState<string | null>(null);
+
   const [cart, setCart] = usePersistent<CartLine[]>("nova_cart", []);
   const [wishlist, setWishlist] = usePersistent<string[]>("nova_wish", []);
-  const [codes, setCodes] = usePersistent<DiscountCode[]>("nova_codes", CODES_SEED);
-  const [orders, setOrders] = usePersistent<Order[]>("nova_orders", ORDERS_SEED);
-  const [payments, setPayments] = usePersistent<Payment[]>("nova_payments", PAYMENTS_SEED);
-  /* v2: أضيفت حقول اسم الدخول وكلمة المرور للبائعين */
-  const [sellers, setSellers] = usePersistent<Seller[]>("nova_sellers_v2", SELLERS_SEED);
-  const [adminAuthed, setAdminAuthed] = usePersistent<boolean>("nova_admin", false);
-  const [customer, setCustomer] = usePersistent<{ name: string; phone: string } | null>(
-    "nova_customer",
-    null
-  );
+  const [customer, setCustomer] = usePersistent<{ name: string; phone: string } | null>("nova_customer", null);
   const [toasts, setToasts] = useState<{ id: number; msg: string }[]>([]);
 
-  const notify = (msg: string) => {
+  /* تنظيف مفاتيح النسخة القديمة التي كانت تحفظ كل شيء في المتصفح */
+  useEffect(() => {
+    try {
+      ["nova_products", "nova_seller", "nova_codes", "nova_orders", "nova_payments", "nova_sellers_v2", "nova_admin"].forEach((k) =>
+        localStorage.removeItem(k)
+      );
+    } catch {
+      /* تجاهل */
+    }
+  }, []);
+
+  const notify = useCallback((msg: string) => {
     const id = Date.now() + Math.random();
     setToasts((t) => [...t, { id, msg }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
-  };
+  }, []);
 
-  const addToCart = (id: string, qty = 1) => {
-    setCart((c) => {
-      const line = c.find((l) => l.id === id);
-      if (line) return c.map((l) => (l.id === id ? { ...l, qty: Math.min(9, l.qty + qty) } : l));
-      return [...c, { id, qty }];
+  const fetchCatalog = useCallback(async (a: Api) => {
+    try {
+      const c = await a.getCatalog();
+      setCategories(c.categories);
+      setProducts(c.products);
+      setCities(c.cities);
+      setSettings(c.settings);
+      setStatus("ready");
+    } catch (e) {
+      setLoadError(cleanError(e));
+      setStatus("error");
+    }
+  }, []);
+
+  const refreshAuth = useCallback(async (a: Api) => {
+    const [email, admin] = await Promise.all([a.getSessionEmail(), a.isAdmin()]);
+    setAdminEmail(email);
+    setIsAdmin(admin);
+  }, []);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    loadApi().then((a) => {
+      if (!a) {
+        setStatus("unconfigured");
+        return;
+      }
+      setApi(a);
+      fetchCatalog(a);
+      refreshAuth(a);
+      unsub = a.onAuthChange(() => refreshAuth(a));
     });
-    notify("تمت الإضافة إلى السلة");
-  };
-  const removeFromCart = (id: string) => setCart((c) => c.filter((l) => l.id !== id));
-  const setQty = (id: string, qty: number) =>
-    setCart((c) =>
-      qty <= 0 ? c.filter((l) => l.id !== id) : c.map((l) => (l.id === id ? { ...l, qty: Math.min(9, qty) } : l))
-    );
-  const clearCart = () => setCart([]);
+    return () => unsub?.();
+  }, [fetchCatalog, refreshAuth]);
 
-  const toggleWish = (id: string) => {
-    setWishlist((w) => (w.includes(id) ? w.filter((x) => x !== id) : [...w, id]));
-    notify(wishlist.includes(id) ? "أُزيل من المفضلة" : "أُضيف إلى المفضلة");
-  };
+  /* إزالة منتجات لم تعد موجودة من السلة */
+  useEffect(() => {
+    if (status !== "ready") return;
+    setCart((c) => c.filter((l) => products.some((p) => p.id === l.id)));
+  }, [status, products, setCart]);
 
-  const currentSeller = sellers.find((s) => s.id === sellerId) ?? null;
-
-  const value = useMemo<ShopCtx>(
-    () => ({
+  const value = useMemo<ShopCtx>(() => {
+    const categoryOf = (id: string) => categories.find((c) => c.id === id);
+    return {
+      api,
+      status,
+      loadError,
+      reloadCatalog: async () => {
+        if (api) await fetchCatalog(api);
+      },
+      categories,
       products,
-      addProduct: (p) => {
-        setProducts((ps) => [p, ...ps]);
-        notify("تمت إضافة المنتج");
-      },
-      updateProduct: (id, patch) => {
-        setProducts((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-        notify("تم حفظ التعديلات");
-      },
-      deleteProduct: (id) => {
-        setProducts((ps) => ps.filter((p) => p.id !== id));
-        setCart((c) => c.filter((l) => l.id !== id));
-        notify("تم حذف المنتج");
-      },
+      cities,
+      settings,
+      categoryOf,
+      storeNameOf: (p) => categoryOf(p.category)?.storeName ?? "Nova",
+
       cart,
-      addToCart,
-      removeFromCart,
-      setQty,
-      clearCart,
+      addToCart: (id, qty = 1) => {
+        setCart((c) => {
+          const line = c.find((l) => l.id === id);
+          if (line) return c.map((l) => (l.id === id ? { ...l, qty: Math.min(9, l.qty + qty) } : l));
+          return [...c, { id, qty: Math.min(9, qty) }];
+        });
+        notify("تمت الإضافة إلى السلة");
+      },
+      removeFromCart: (id) => setCart((c) => c.filter((l) => l.id !== id)),
+      setQty: (id, qty) =>
+        setCart((c) =>
+          qty <= 0 ? c.filter((l) => l.id !== id) : c.map((l) => (l.id === id ? { ...l, qty: Math.min(9, qty) } : l))
+        ),
+      clearCart: () => setCart([]),
       cartCount: cart.reduce((s, l) => s + l.qty, 0),
+
       wishlist,
-      toggleWish,
-      codes,
-      addCode: (c) => {
-        setCodes((cs) => [...cs.filter((x) => x.code !== c.code), c]);
-        notify("تم حفظ كود الخصم");
+      toggleWish: (id) => {
+        notify(wishlist.includes(id) ? "أُزيل من المفضلة" : "أُضيف إلى المفضلة");
+        setWishlist((w) => (w.includes(id) ? w.filter((x) => x !== id) : [...w, id]));
       },
-      removeCode: (code) => {
-        setCodes((cs) => cs.filter((x) => x.code !== code));
-        notify("تم حذف الكود");
+
+      isAdmin,
+      adminEmail,
+      signIn: async (email, password) => {
+        if (!api) throw new Error("الخادم غير متاح");
+        await api.signIn(email, password);
+        await refreshAuth(api);
       },
-      toggleCode: (code) =>
-        setCodes((cs) => cs.map((x) => (x.code === code ? { ...x, active: !x.active } : x))),
-      orders,
-      placeOrder: (o) => setOrders((os) => [o, ...os]),
-      setOrderStatus: (id, s) => {
-        setOrders((os) => os.map((o) => (o.id === id ? { ...o, status: s } : o)));
-        notify("تم تحديث حالة الطلب");
+      signOut: async () => {
+        if (!api) return;
+        await api.signOut();
+        setIsAdmin(false);
+        setAdminEmail(null);
       },
-      payments,
-      addPayment: (p) => setPayments((ps) => [p, ...ps]),
-      setPaymentStatus: (id, s) => {
-        setPayments((ps) => ps.map((p) => (p.id === id ? { ...p, status: s } : p)));
-        setOrders((os) =>
-          os.map((o) =>
-            o.id === payments.find((p) => p.id === id)?.orderId && s === "approved"
-              ? { ...o, status: "قيد التجهيز" }
-              : o
-          )
-        );
-        notify(s === "approved" ? "تم اعتماد الدفعة" : "تم رفض الدفعة");
-      },
-      sellers,
-      toggleSeller: (id) =>
-        setSellers((ss) => ss.map((s) => (s.id === id ? { ...s, active: !s.active } : s))),
-      addSeller: (s) => {
-        const u = s.username.trim().toLowerCase();
-        if (sellers.some((x) => (x.username ?? "").toLowerCase() === u)) return "اسم الدخول مستخدم مسبقًا";
-        if (sellers.some((x) => x.store.trim() === s.store.trim())) return "اسم المتجر مستخدم مسبقًا";
-        setSellers((ss) => [...ss, { ...s, username: u }]);
-        notify(`تمت إضافة البائع «${s.store}»`);
-        return null;
-      },
-      removeSeller: (id) => {
-        const target = sellers.find((s) => s.id === id);
-        setSellers((ss) => ss.filter((s) => s.id !== id));
-        if (target) setProducts((ps) => ps.filter((p) => p.seller !== target.store));
-        if (sellerId === id) setSellerId(null);
-        notify("تم حذف البائع ومنتجاته");
-      },
-      sellerId,
-      currentSeller,
-      sellerLogin: (username, password) => {
-        const u = username.trim().toLowerCase();
-        const s = sellers.find(
-          (x) => (x.username ?? "").toLowerCase() === u && x.password === password
-        );
-        if (!s) return { ok: false, msg: "اسم الدخول أو كلمة المرور غير صحيحة" };
-        if (!s.active) return { ok: false, msg: "حساب هذا المتجر موقوف — راجع إدارة NOVA" };
-        setSellerId(s.id);
-        notify(`أهلًا بمتجر ${s.store}`);
-        return { ok: true, msg: "" };
-      },
-      sellerLogout: () => setSellerId(null),
-      adminAuthed,
-      adminLogin: (ok) => setAdminAuthed(ok),
+
       customer,
       setCustomer,
       toasts,
       notify,
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [products, cart, wishlist, codes, orders, payments, sellers, sellerId, currentSeller, adminAuthed, customer, toasts]
-  );
+    };
+  }, [api, status, loadError, categories, products, cities, settings, cart, wishlist, isAdmin, adminEmail, customer, toasts, fetchCatalog, refreshAuth, notify, setCart, setWishlist, setCustomer]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

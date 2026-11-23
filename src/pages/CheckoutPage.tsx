@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -14,27 +14,36 @@ import {
   Truck,
 } from "lucide-react";
 import {
-  CITIES,
+  cleanError,
   CLIQ_ALIAS,
   EMAIL,
-  FREE_DELIVERY_THRESHOLD,
   jod,
   UNIVERSITIES,
   WHATSAPP,
   WHATSAPP_INTL,
 } from "../lib/data";
-import type { Order, Payment } from "../lib/data";
+import type { PlacedOrder, Quote } from "../lib/data";
 import { useShop } from "../lib/store";
 
 const PHONE_RE = /^07\d{8}$/;
 
+interface Placed {
+  res: PlacedOrder;
+  method: "cliq" | "cod";
+  phone: string;
+  university: string;
+  invoiceNo: string;
+  senderPhone: string;
+}
+
 export default function CheckoutPage() {
-  const { cart, products, codes, placeOrder, addPayment, clearCart, customer, setCustomer, notify } = useShop();
+  const { api, cart, products, cities, settings, clearCart, customer, setCustomer, notify, reloadCatalog } = useShop();
   const location = useLocation() as { state?: { code?: string | null } };
+  const codeParam = location.state?.code ?? null;
 
   const [name, setName] = useState(customer?.name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
-  const [city, setCity] = useState(CITIES[0].name);
+  const [city, setCity] = useState(cities[0]?.name ?? "عمّان");
   const [address, setAddress] = useState("");
   const [university, setUniversity] = useState("");
   const [notes, setNotes] = useState("");
@@ -42,20 +51,43 @@ export default function CheckoutPage() {
   const [invoiceNo, setInvoiceNo] = useState("");
   const [senderPhone, setSenderPhone] = useState("");
   const [copied, setCopied] = useState(false);
-  const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
+  const [placed, setPlaced] = useState<Placed | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [serverQuote, setServerQuote] = useState<Quote | null>(null);
 
   const lines = cart
     .map((l) => ({ ...l, product: products.find((p) => p.id === l.id)! }))
     .filter((l) => l.product);
 
-  const subtotal = useMemo(() => lines.reduce((s, l) => s + l.product.price * l.qty, 0), [lines]);
-  const code = codes.find((c) => c.code === location.state?.code && c.active);
-  const discount = code ? (subtotal * code.percent) / 100 : 0;
-
+  const localSubtotal = useMemo(() => lines.reduce((s, l) => s + l.product.price * l.qty, 0), [lines]);
   const isStudent = university !== "" || /جامع/.test(notes);
-  const cityFee = CITIES.find((c) => c.name === city)?.fee ?? 3;
-  const deliveryFee = isStudent || subtotal - discount >= FREE_DELIVERY_THRESHOLD ? 0 : cityFee;
-  const total = subtotal - discount + deliveryFee;
+
+  /* المجاميع النهائية من الخادم — نفس الحساب الذي يُعتمد عند تأكيد الطلب */
+  const cartKey = JSON.stringify(cart);
+  useEffect(() => {
+    if (!api || cart.length === 0) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      api
+        .quote(cart, codeParam, city, isStudent)
+        .then((q) => alive && setServerQuote(q))
+        .catch(() => alive && setServerQuote(null));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, cartKey, codeParam, city, isStudent]);
+
+  const cityFee = cities.find((c) => c.name === city)?.fee ?? 3;
+  const subtotal = serverQuote?.subtotal ?? localSubtotal;
+  const discount = serverQuote?.discount ?? 0;
+  const deliveryFee =
+    serverQuote?.deliveryFee ?? (isStudent || localSubtotal >= settings.freeDeliveryThreshold ? 0 : cityFee);
+  const total = serverQuote?.total ?? subtotal - discount + deliveryFee;
+  const code = serverQuote?.code ? { code: serverQuote.code } : null;
 
   const copyAlias = async () => {
     try {
@@ -74,57 +106,47 @@ export default function CheckoutPage() {
     address.trim().length >= 5 &&
     (method === "cod" || (invoiceNo.trim().length >= 4 && PHONE_RE.test(senderPhone)));
 
-  const submit = () => {
-    if (!valid) {
+  const submit = async () => {
+    if (!valid || !api || submitting) {
       notify("يرجى تعبئة جميع الحقول المطلوبة بشكل صحيح");
       return;
     }
-    const id = `NV-${Date.now().toString(36).toUpperCase()}`;
-    const order: Order = {
-      id,
-      items: lines.map((l) => ({ id: l.product.id, name: l.product.name, price: l.product.price, qty: l.qty, img: l.product.img })),
-      subtotal,
-      discount,
-      code: code?.code,
-      deliveryFee,
-      total,
-      customer: {
-        name: name.trim(),
-        phone,
-        city,
-        address: address.trim(),
-        university: university || undefined,
-        notes: notes.trim() || undefined,
-      },
-      paymentMethod: method,
-      status: method === "cliq" ? "بانتظار الدفع" : "قيد التجهيز",
-      createdAt: Date.now(),
-    };
-    placeOrder(order);
-
-    if (method === "cliq") {
-      const payment: Payment = {
-        id: `pay-${Date.now()}`,
-        orderId: id,
-        invoiceNo: invoiceNo.trim(),
-        senderPhone,
-        customerName: name.trim(),
-        amount: total,
-        wallet: "كليك — أورانج موني / بنك الاتحاد",
-        status: "pending",
-        createdAt: Date.now(),
-      };
-      addPayment(payment);
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      const res = await api.placeOrder(
+        cart,
+        {
+          name: name.trim(),
+          phone,
+          city,
+          address: address.trim(),
+          university: university || undefined,
+          notes: notes.trim() || undefined,
+        },
+        method === "cliq" ? { method, invoiceNo: invoiceNo.trim(), senderPhone } : { method },
+        codeParam
+      );
+      setCustomer({ name: name.trim(), phone });
+      clearCart();
+      setPlaced({ res, method, phone, university, invoiceNo: invoiceNo.trim(), senderPhone });
+      reloadCatalog();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (e) {
+      setSubmitError(cleanError(e));
+    } finally {
+      setSubmitting(false);
     }
-
-    setCustomer({ name: name.trim(), phone });
-    clearCart();
-    setPlacedOrder(order);
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  /* رسالة واتساب احتياطية بتفاصيل الطلب إن تعذّر الإرسال */
+  const waFallback = `https://wa.me/${WHATSAPP_INTL}?text=${encodeURIComponent(
+    `طلب جديد من الموقع:\n${lines.map((l) => `• ${l.product.name} × ${l.qty}`).join("\n")}\nالاسم: ${name}\nالهاتف: ${phone}\nالمحافظة: ${city}\nالعنوان: ${address}`
+  )}`;
+
   /* ---------------- شاشة النجاح ---------------- */
-  if (placedOrder) {
+  if (placed) {
+    const placedOrder = { id: placed.res.id, paymentMethod: placed.method, deliveryFee: placed.res.deliveryFee, customer: { phone: placed.phone, university: placed.university } };
     return (
       <div className="mx-auto max-w-2xl px-4 py-16">
         <motion.div
@@ -155,9 +177,10 @@ export default function CheckoutPage() {
               </p>
               <p className="mt-2 text-[13px] leading-7 text-white/65">
                 استلمنا رقم الفاتورة
-                <span className="mx-1 font-nova font-semibold text-white" dir="ltr">#{invoiceNo}</span>
+                <span className="mx-1 font-nova font-semibold text-white" dir="ltr">#{placed.invoiceNo}</span>
+                بمبلغ <span className="mx-1 font-nova font-semibold text-white">{jod(placed.res.total)}</span>
                 وسيقوم فريقنا بتدقيقها مع المحفظة، ثم نتواصل معك على رقمك
-                <span className="mx-1 font-semibold text-white" dir="ltr">{senderPhone}</span>
+                <span className="mx-1 font-semibold text-white" dir="ltr">{placed.senderPhone}</span>
                 لتأكيد الدفعة وانطلاق الطلب.
               </p>
             </div>
@@ -166,6 +189,12 @@ export default function CheckoutPage() {
               ستدفع عند الاستلام. سنتصل بك على <span className="font-semibold text-white" dir="ltr">{placedOrder.customer.phone}</span> لتأكيد الطلب قبل الشحن.
             </p>
           )}
+
+          <p className="mx-auto mt-4 max-w-md text-[13px] leading-7 text-white/60">
+            {placed.res.hasOnOrder
+              ? `طلبك يحتوي منتجات «عند الطلب» — يُجهّز خلال ${placed.res.maxPrepDays} أيام تقريبًا ثم يُشحن.`
+              : "منتجاتك متوفرة — التوصيل خلال 1-2 يوم."}
+          </p>
 
           {placedOrder.deliveryFee === 0 && (
             <p className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-wa/10 px-4 py-1.5 text-xs font-bold text-wa">
@@ -240,7 +269,7 @@ export default function CheckoutPage() {
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-white/55">المحافظة *</label>
                 <select value={city} onChange={(e) => setCity(e.target.value)} className="input-nova [&>option]:bg-nova-deep">
-                  {CITIES.map((c) => (
+                  {cities.map((c) => (
                     <option key={c.name} value={c.name}>{c.name} — {jod(c.fee)}</option>
                   ))}
                 </select>
@@ -417,10 +446,18 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            <button onClick={submit} disabled={!valid} className="btn-star mt-6 h-13 w-full py-3.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100">
-              تأكيد الطلب
+            <button onClick={submit} disabled={!valid || submitting} className="btn-star mt-6 h-13 w-full py-3.5 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100">
+              {submitting ? "جارِ إرسال الطلب…" : "تأكيد الطلب"}
               <ChevronLeft className="size-4" />
             </button>
+            {submitError && (
+              <div className="mt-3 rounded-2xl border border-red-400/30 bg-red-400/8 p-3 text-center text-[12px] leading-6 text-red-200">
+                لم يُرسل الطلب: {submitError}
+                <a href={waFallback} target="_blank" rel="noreferrer" className="mt-1 block font-bold text-wa underline">
+                  أرسل الطلب عبر واتساب بدلًا من ذلك
+                </a>
+              </div>
+            )}
             <p className="mt-3 text-center text-[11px] leading-5 text-white/40">
               بالضغط على «تأكيد الطلب» سيتواصل معك فريق NOVA على هاتفك لتأكيد التفاصيل.
               للمساعدة: <span dir="ltr" className="text-white/60">{WHATSAPP}</span> أو {EMAIL}

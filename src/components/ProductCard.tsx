@@ -1,26 +1,19 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Heart, Minus, Plus, ShoppingCart, Star, Store, X } from "lucide-react";
+import { Heart, Minus, Plus, ShoppingCart, X } from "lucide-react";
 import { jod } from "../lib/data";
 import type { Product } from "../lib/data";
 import { useShop } from "../lib/store";
+import StoreMark from "./StoreMark";
+import { AvailabilityBadge, OriginalBadge, RealRating } from "./ProductBadges";
 
-export function RatingStars({ rating, className = "size-3.5" }: { rating: number; className?: string }) {
-  return (
-    <div className="flex items-center gap-0.5" dir="ltr">
-      {Array.from({ length: 5 }).map((_, i) => (
-        <Star
-          key={i}
-          className={`${className} ${i < Math.round(rating) ? "fill-nova-dust text-nova-dust" : "text-white/20"}`}
-        />
-      ))}
-    </div>
-  );
-}
+const canBuy = (p: Product) => p.availability === "on_order" || p.stock > 0;
 
 function ProductModal({ p, onClose }: { p: Product; onClose: () => void }) {
-  const { addToCart } = useShop();
+  const { addToCart, categoryOf } = useShop();
   const [qty, setQty] = useState(1);
+  const maxQty = p.availability === "in_stock" ? Math.min(9, p.stock) : 9;
 
   return (
     <motion.div
@@ -56,31 +49,34 @@ function ProductModal({ p, onClose }: { p: Product; onClose: () => void }) {
         </div>
 
         <div className="flex flex-col p-6 sm:p-8">
-          <span className="flex w-fit items-center gap-1.5 rounded-full bg-white/5 px-3 py-1 text-[11px] text-white/60">
-            <Store className="size-3" />
-            {p.seller}
-          </span>
+          <StoreMark category={categoryOf(p.category)} />
           <h3 className="mt-3 font-cairo text-2xl font-extrabold leading-snug">{p.name}</h3>
-          <div className="mt-2 flex items-center gap-2">
-            <RatingStars rating={p.rating} />
-            <span className="text-xs text-white/50">({p.reviews} تقييم)</span>
+          <div className="mt-2">
+            <RealRating p={p} />
           </div>
 
           <div className="mt-4 flex items-end gap-3">
             <span className="font-nova text-3xl font-semibold text-nova-dust">{jod(p.price)}</span>
-            {p.oldPrice && (
+            {p.oldPrice && p.oldPrice > p.price && (
               <span className="pb-1 text-sm text-white/40 line-through">{jod(p.oldPrice)}</span>
             )}
           </div>
 
+          <div className="mt-3 flex flex-wrap gap-2">
+            <AvailabilityBadge p={p} />
+            {p.isOriginalGuaranteed && <OriginalBadge />}
+          </div>
+
           <p className="mt-4 text-sm leading-7 text-white/65">{p.desc}</p>
 
-          <div className="mt-3 flex items-center gap-2 text-xs">
-            <span className={`h-2 w-2 rounded-full ${p.stock > 5 ? "bg-wa" : "bg-amber-400"}`} />
-            <span className="text-white/55">
-              {p.stock > 5 ? "متوفر" : `بقي ${p.stock} فقط — اطلب الآن`}
-            </span>
-          </div>
+          {p.availability === "in_stock" && (
+            <div className="mt-3 flex items-center gap-2 text-xs">
+              <span className={`h-2 w-2 rounded-full ${p.stock > 5 ? "bg-wa" : p.stock > 0 ? "bg-amber-400" : "bg-red-400"}`} />
+              <span className="text-white/55">
+                {p.stock > 5 ? "متوفر في المخزون" : p.stock > 0 ? `بقي ${p.stock} فقط` : "نفدت الكمية حاليًا"}
+              </span>
+            </div>
+          )}
 
           <div className="mt-auto flex items-center gap-3 pt-6">
             <div className="flex items-center rounded-full border border-white/15">
@@ -88,19 +84,20 @@ function ProductModal({ p, onClose }: { p: Product; onClose: () => void }) {
                 <Minus className="size-4" />
               </button>
               <span className="w-8 text-center font-nova text-lg font-semibold tabular-nums">{qty}</span>
-              <button onClick={() => setQty((q) => Math.min(9, q + 1))} className="flex h-11 w-11 items-center justify-center text-white/70 hover:text-white" aria-label="زيادة">
+              <button onClick={() => setQty((q) => Math.min(Math.max(1, maxQty), q + 1))} className="flex h-11 w-11 items-center justify-center text-white/70 hover:text-white" aria-label="زيادة">
                 <Plus className="size-4" />
               </button>
             </div>
             <button
+              disabled={!canBuy(p)}
               onClick={() => {
                 addToCart(p.id, qty);
                 onClose();
               }}
-              className="btn-star h-12 flex-1 px-4 text-sm"
+              className="btn-star h-12 flex-1 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
             >
               <ShoppingCart className="size-4" />
-              أضف إلى السلة
+              {canBuy(p) ? "أضف إلى السلة" : "غير متوفر"}
             </button>
           </div>
         </div>
@@ -110,7 +107,7 @@ function ProductModal({ p, onClose }: { p: Product; onClose: () => void }) {
 }
 
 export default function ProductCard({ p, index = 0 }: { p: Product; index?: number }) {
-  const { addToCart, wishlist, toggleWish } = useShop();
+  const { addToCart, wishlist, toggleWish, categoryOf } = useShop();
   const [open, setOpen] = useState(false);
   const wished = wishlist.includes(p.id);
 
@@ -147,26 +144,30 @@ export default function ProductCard({ p, index = 0 }: { p: Product; index?: numb
         </button>
 
         <div className="flex flex-1 flex-col p-4">
-          <span className="text-[10px] font-semibold text-white/40">{p.seller}</span>
-          <button onClick={() => setOpen(true)} className="mt-1 text-start font-cairo text-[15px] font-bold leading-snug transition-colors hover:text-nova-dust">
+          <StoreMark category={categoryOf(p.category)} size="xs" />
+          <button onClick={() => setOpen(true)} className="mt-2 text-start font-cairo text-[15px] font-bold leading-snug transition-colors hover:text-nova-dust">
             {p.name}
           </button>
-          <div className="mt-2 flex items-center gap-1.5">
-            <RatingStars rating={p.rating} className="size-3" />
-            <span className="text-[10px] text-white/40">({p.reviews})</span>
+          <div className="mt-2">
+            <RealRating p={p} className="size-3" />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <AvailabilityBadge p={p} compact />
+            {p.isOriginalGuaranteed && <OriginalBadge compact />}
           </div>
 
           <div className="mt-auto flex items-center justify-between pt-4">
             <div>
               <span className="font-nova text-xl font-semibold text-nova-dust">{jod(p.price)}</span>
-              {p.oldPrice && (
+              {p.oldPrice && p.oldPrice > p.price && (
                 <span className="ms-2 text-[11px] text-white/35 line-through">{jod(p.oldPrice)}</span>
               )}
             </div>
             <button
               onClick={() => addToCart(p.id)}
+              disabled={!canBuy(p)}
               aria-label="أضف للسلة"
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black transition-all duration-300 hover:scale-110 hover:shadow-[0_0_20px_rgba(255,255,255,0.4)] active:scale-95"
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black transition-all duration-300 hover:scale-110 hover:shadow-[0_0_20px_rgba(255,255,255,0.4)] active:scale-95 disabled:opacity-30 disabled:hover:scale-100"
             >
               <ShoppingCart className="size-4" />
             </button>
@@ -174,7 +175,11 @@ export default function ProductCard({ p, index = 0 }: { p: Product; index?: numb
         </div>
       </motion.article>
 
-      <AnimatePresence>{open && <ProductModal p={p} onClose={() => setOpen(false)} />}</AnimatePresence>
+      {/* بوابة إلى body حتى تظهر النافذة فوق زر واتساب العائم */}
+      {createPortal(
+        <AnimatePresence>{open && <ProductModal p={p} onClose={() => setOpen(false)} />}</AnimatePresence>,
+        document.body
+      )}
     </>
   );
 }

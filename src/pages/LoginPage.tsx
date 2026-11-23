@@ -1,32 +1,24 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { KeyRound, Lock, ShieldCheck, Store, User, UserRound } from "lucide-react";
+import { KeyRound, Lock, ShieldCheck, User, UserRound } from "lucide-react";
 import NovaLogo from "../components/NovaLogo";
-import { ADMIN_EMAIL, ADMIN_PASS } from "../lib/data";
+import { cleanError } from "../lib/data";
 import { useShop } from "../lib/store";
 
-type Tab = "customer" | "seller" | "admin";
+type Tab = "customer" | "admin";
 
 export default function LoginPage() {
   const [tab, setTab] = useState<Tab>("customer");
-  const { setCustomer, adminLogin, sellerLogin, notify } = useShop();
+  const { setCustomer, signIn, notify, api } = useShop();
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
-  const [sellerUser, setSellerUser] = useState("");
-  const [sellerPass, setSellerPass] = useState("");
   const [err, setErr] = useState("");
-
-  const doSellerLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const res = sellerLogin(sellerUser, sellerPass);
-    if (res.ok) navigate("/seller");
-    else setErr(res.msg);
-  };
+  const [busy, setBusy] = useState(false);
 
   const customerLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,14 +31,24 @@ export default function LoginPage() {
     navigate("/");
   };
 
-  const doAdminLogin = (e: React.FormEvent) => {
+  /* دخول الإدارة عبر Supabase Auth — كلمة المرور تُفحص على الخادم فقط */
+  const doAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email.trim().toLowerCase() === ADMIN_EMAIL && pass === ADMIN_PASS) {
-      adminLogin(true);
+    setBusy(true);
+    setErr("");
+    try {
+      await signIn(email.trim(), pass);
+      const admin = await api?.isAdmin();
+      if (!admin) {
+        setErr("هذا الحساب ليس حساب إدارة");
+        return;
+      }
       notify("تم تسجيل دخول الإدارة");
       navigate("/admin");
-    } else {
-      setErr("بيانات الإدارة غير صحيحة");
+    } catch (e2) {
+      setErr(cleanError(e2));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -64,7 +66,6 @@ export default function LoginPage() {
             {(
               [
                 { id: "customer", label: "العملاء", icon: UserRound },
-                { id: "seller", label: "البائعون", icon: Store },
                 { id: "admin", label: "الإدارة", icon: Lock },
               ] as { id: Tab; label: string; icon: typeof User }[]
             ).map((t) => {
@@ -89,7 +90,7 @@ export default function LoginPage() {
           {tab === "customer" ? (
             <form onSubmit={customerLogin} className="space-y-4">
               <p className="text-sm leading-7 text-white/55">
-                سجّل دخولك برقمك الأردني لحفظ طلباتك وتتبّعها، وسنملأ بياناتك تلقائيًا عند إتمام الطلب.
+                أدخل اسمك ورقمك الأردني وسنملأ بياناتك تلقائيًا عند إتمام الطلب (تُحفظ على جهازك فقط).
               </p>
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-white/55">الاسم</label>
@@ -108,57 +109,22 @@ export default function LoginPage() {
               {err && <p className="text-xs text-red-400">{err}</p>}
               <button type="submit" className="btn-star h-12 w-full">
                 <User className="size-4" />
-                دخول / إنشاء حساب
+                متابعة
               </button>
-            </form>
-          ) : tab === "seller" ? (
-            <form onSubmit={doSellerLogin} className="space-y-4">
-              <p className="flex items-start gap-2 rounded-2xl bg-white/5 p-4 text-[12px] leading-6 text-white/55">
-                <Store className="mt-0.5 size-4 shrink-0 text-nova-dust" />
-                بوابة متاجر NOVA المعتمدة: أدخل اسم الدخول الذي منحته لك الإدارة لإدارة منتجاتك وأسعارك ومتابعة مبيعاتك.
-              </p>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-white/55">اسم الدخول (اسم المتجر)</label>
-                <input
-                  value={sellerUser}
-                  onChange={(e) => setSellerUser(e.target.value)}
-                  placeholder="alpha"
-                  dir="ltr"
-                  className="input-nova text-end font-nova tracking-wider"
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-white/55">كلمة المرور</label>
-                <input
-                  type="password"
-                  value={sellerPass}
-                  onChange={(e) => setSellerPass(e.target.value)}
-                  placeholder="••••••••"
-                  dir="ltr"
-                  className="input-nova text-end"
-                />
-              </div>
-              {err && <p className="text-xs text-red-400">{err}</p>}
-              <button type="submit" className="btn-star h-12 w-full">
-                <Store className="size-4" />
-                دخول لوحة المتجر
-              </button>
-              <p className="rounded-xl border border-nova-dust/25 bg-nova-dust/8 px-4 py-2.5 text-center text-[11px] text-nova-dust" dir="ltr">
-                DEMO: alpha / alpha123 — techzone / tech123
-              </p>
             </form>
           ) : (
             <form onSubmit={doAdminLogin} className="space-y-4">
               <p className="flex items-start gap-2 rounded-2xl bg-white/5 p-4 text-[12px] leading-6 text-white/55">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-nova-dust" />
-                منطقة خاصة بإدارة الموقع فقط: تدقيق الدفعات، إدارة البائعين، وأكواد الخصم.
+                منطقة خاصة بإدارة الموقع فقط: المنتجات والأسعار، الطلبات والدفعات، الموردون وأكواد الخصم.
               </p>
               <div>
                 <label className="mb-1.5 block text-xs font-semibold text-white/55">البريد الإلكتروني</label>
                 <input
+                  type="email"
+                  autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@nova.jo"
                   dir="ltr"
                   className="input-nova text-end"
                 />
@@ -167,6 +133,7 @@ export default function LoginPage() {
                 <label className="mb-1.5 block text-xs font-semibold text-white/55">كلمة المرور</label>
                 <input
                   type="password"
+                  autoComplete="current-password"
                   value={pass}
                   onChange={(e) => setPass(e.target.value)}
                   placeholder="••••••••"
@@ -175,13 +142,15 @@ export default function LoginPage() {
                 />
               </div>
               {err && <p className="text-xs text-red-400">{err}</p>}
-              <button type="submit" className="btn-star h-12 w-full">
+              <button type="submit" disabled={busy} className="btn-star h-12 w-full disabled:opacity-50">
                 <KeyRound className="size-4" />
-                دخول لوحة التحكم
+                {busy ? "جارِ التحقق…" : "دخول لوحة التحكم"}
               </button>
-              <p className="rounded-xl border border-nova-dust/25 bg-nova-dust/8 px-4 py-2.5 text-center text-[11px] text-nova-dust" dir="ltr">
-                DEMO: {ADMIN_EMAIL} / {ADMIN_PASS}
-              </p>
+              {api?.mode === "dev-mock" && (
+                <p className="rounded-xl border border-amber-300/30 bg-amber-300/8 px-4 py-2.5 text-center text-[11px] text-amber-200">
+                  وضع التطوير المحلي: أي بريد + كلمة المرور «dev»
+                </p>
+              )}
             </form>
           )}
         </div>
